@@ -18,6 +18,14 @@ alter table characters add column if not exists slot integer;
 alter table characters add column if not exists style_id text;
 alter table characters add column if not exists style_label text;
 alter table characters add column if not exists image_path text;
+alter table characters add column if not exists attack integer;
+alter table characters add column if not exists defense integer;
+alter table characters add column if not exists magic integer;
+alter table characters add column if not exists mana integer;
+alter table characters add column if not exists speed integer;
+alter table characters add column if not exists summary text;
+alter table characters add column if not exists is_editing boolean;
+alter table characters alter column is_editing set default false;
 
 alter table battles add column if not exists winner_slot integer;
 alter table battles add column if not exists winner_id uuid;

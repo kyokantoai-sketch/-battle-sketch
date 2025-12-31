@@ -24,6 +24,13 @@ create table if not exists characters (
   style_label text,
   image_path text,
   image_url text,
+  attack integer,
+  defense integer,
+  magic integer,
+  mana integer,
+  speed integer,
+  summary text,
+  is_editing boolean not null default false,
   created_at timestamptz not null default now(),
   unique (room_id, slot)
 );

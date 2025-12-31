@@ -346,3 +346,51 @@ a {
   text-transform: uppercase;
   color: rgba(27, 27, 31, 0.6);
 }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.stat-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(31, 122, 122, 0.12);
+  border: 1px solid rgba(31, 122, 122, 0.18);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.stat-label {
+  color: rgba(27, 27, 31, 0.6);
+}
+
+.stat-value {
+  font-weight: 600;
+  color: rgba(27, 27, 31, 0.85);
+}
+
+.summary-card {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(27, 27, 31, 0.08);
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(27, 27, 31, 0.75);
+}
+
+.result-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.6);
+  color: rgba(27, 27, 31, 0.5);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+}

@@ -7,6 +7,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 const passwordKey = (code: string) => `room:${code}:pass`;
 const tokenKey = (code: string) => `room:${code}:token`;
 
+const DEFAULT_VOLUME = 0.5;
+const formatStat = (value: number | null | undefined) =>
+  typeof value === "number" && Number.isFinite(value) ? value : "--";
+const cleanFormValue = (value: string) => value.trim();
+
 type Room = {
   code: string;
   name: string | null;
@@ -22,6 +27,13 @@ type Player = {
   description: string;
   styleLabel: string;
   imageUrl: string;
+  attack?: number | null;
+  defense?: number | null;
+  magic?: number | null;
+  mana?: number | null;
+  speed?: number | null;
+  summary?: string | null;
+  isEditing?: boolean;
   createdAt: string;
 };
 
@@ -55,13 +67,24 @@ export default function RoomPage() {
   const [mySlot, setMySlot] = useState<number | null>(null);
   const [isSpectator, setIsSpectator] = useState(false);
   const [viewerToken, setViewerToken] = useState("");
+  const [isMuted, setIsMuted] = useState(false);
+  const [audioReady, setAudioReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [forms, setForms] = useState({
     1: { name: "", description: "" },
     2: { name: "", description: "" },
   });
+  const bgmRef = useRef<HTMLAudioElement | null>(null);
+  const seReadyRef = useRef<HTMLAudioElement | null>(null);
+  const seBattleStartRef = useRef<HTMLAudioElement | null>(null);
+  const seWinRef = useRef<HTMLAudioElement | null>(null);
+  const seLoseRef = useRef<HTMLAudioElement | null>(null);
+  const seKoRef = useRef<HTMLAudioElement | null>(null);
   const battleSectionRef = useRef<HTMLElement | null>(null);
   const hasAutoScrolledRef = useRef(false);
+  const readySlotsRef = useRef<Set<number> | null>(null);
+  const prevBattleStatusRef = useRef<"idle" | "generating" | "done">("idle");
+  const seenBattleIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const code = typeof params.roomCode === "string" ? params.roomCode : "";
@@ -69,6 +92,127 @@ export default function RoomPage() {
       setRoomCode(code.toUpperCase());
     }
   }, [params]);
+
+  const initAudio = () => {
+    if (bgmRef.current) return;
+    bgmRef.current = new Audio("/audio/bgm.mp3");
+    bgmRef.current.loop = true;
+    bgmRef.current.volume = DEFAULT_VOLUME;
+
+    seReadyRef.current = new Audio("/audio/se_ready.mp3");
+    seBattleStartRef.current = new Audio("/audio/se_battle_start.mp3");
+    seWinRef.current = new Audio("/audio/se_win.mp3");
+    seLoseRef.current = new Audio("/audio/se_lose.mp3");
+    seKoRef.current = new Audio("/audio/se_ko.mp3");
+
+    [
+      seReadyRef.current,
+      seBattleStartRef.current,
+      seWinRef.current,
+      seLoseRef.current,
+      seKoRef.current,
+    ].forEach(
+      (audio) => {
+        if (audio) {
+          audio.volume = DEFAULT_VOLUME;
+        }
+      }
+    );
+  };
+
+  useEffect(() => {
+    initAudio();
+    return () => {
+      bgmRef.current?.pause();
+    };
+  }, []);
+
+  const ensureAudioReady = async () => {
+    initAudio();
+    if (audioReady) return true;
+    const bgm = bgmRef.current;
+    if (!bgm) return false;
+    try {
+      const prevMuted = bgm.muted;
+      const prevVolume = bgm.volume;
+      bgm.muted = true;
+      bgm.volume = 0;
+      await bgm.play();
+      bgm.pause();
+      bgm.currentTime = 0;
+      bgm.muted = prevMuted;
+      bgm.volume = prevVolume;
+      setAudioReady(true);
+      return true;
+    } catch (err) {
+      return false;
+    }
+  };
+
+  const startBgm = async (forcePlay = false) => {
+    if (!forcePlay && isMuted) return;
+    const ok = await ensureAudioReady();
+    if (!ok) return;
+    const bgm = bgmRef.current;
+    if (!bgm) return;
+    bgm.loop = true;
+    bgm.play().catch(() => null);
+  };
+
+  const playSe = async (ref: { current: HTMLAudioElement | null }) => {
+    initAudio();
+    if (isMuted) return;
+    const ok = await ensureAudioReady();
+    if (!ok) return;
+    const audio = ref.current;
+    if (!audio) return;
+    audio.currentTime = 0;
+    audio.play().catch(() => null);
+  };
+
+  const toggleMute = async () => {
+    if (isMuted) {
+      setIsMuted(false);
+      await startBgm(true);
+      return;
+    }
+    setIsMuted(true);
+  };
+
+  useEffect(() => {
+    const bgm = bgmRef.current;
+    if (!bgm) return;
+    const volume = isMuted ? 0 : DEFAULT_VOLUME;
+    bgm.volume = volume;
+    bgm.muted = isMuted;
+    if (isMuted) {
+      bgm.pause();
+    } else if (audioReady) {
+      bgm.play().catch(() => null);
+    }
+    [
+      seReadyRef.current,
+      seBattleStartRef.current,
+      seWinRef.current,
+      seLoseRef.current,
+      seKoRef.current,
+    ].forEach(
+      (audio) => {
+        if (!audio) return;
+        audio.volume = volume;
+        audio.muted = isMuted;
+      }
+    );
+  }, [isMuted, audioReady]);
+
+  useEffect(() => {
+    if (!unlocked) return;
+    const handler = () => {
+      startBgm();
+    };
+    window.addEventListener("pointerdown", handler, { once: true });
+    return () => window.removeEventListener("pointerdown", handler);
+  }, [unlocked]);
 
   const refreshStatus = async (pass = password) => {
     if (!roomCode || !pass) return;
@@ -132,6 +276,7 @@ export default function RoomPage() {
       await claimSlot(pass);
       setUnlocked(true);
       localStorage.setItem(passwordKey(roomCode), pass);
+      await startBgm();
     } catch (err: any) {
       setError(err.message || "Failed to unlock");
     } finally {
@@ -184,9 +329,60 @@ export default function RoomPage() {
     : null;
 
   const bothReady = Boolean(playerA && playerB);
-  const canRevealOpponent = isSpectator || Boolean(battle);
+  const canRevealOpponent = isSpectator || bothReady || Boolean(battle);
   const slotClaimed = (slot: number) =>
     slotClaims.some((claim) => claim.slot === slot);
+
+  const canShowCharacter = (player: Player | null) => {
+    if (!player || player.isEditing) return false;
+    return player.slot === mySlot || canRevealOpponent;
+  };
+
+  useEffect(() => {
+    if (!audioReady || isMuted) return;
+    const readySlots = new Set<number>();
+    if (playerA) readySlots.add(1);
+    if (playerB) readySlots.add(2);
+
+    if (!readySlotsRef.current) {
+      readySlotsRef.current = readySlots;
+      return;
+    }
+
+    readySlots.forEach((slot) => {
+      if (!readySlotsRef.current?.has(slot)) {
+        void playSe(seReadyRef);
+      }
+    });
+    readySlotsRef.current = readySlots;
+  }, [playerA?.id, playerB?.id, audioReady, isMuted]);
+
+  useEffect(() => {
+    const prev = prevBattleStatusRef.current;
+    if (prev !== "generating" && battleStatus === "generating") {
+      void playSe(seBattleStartRef);
+    }
+    prevBattleStatusRef.current = battleStatus;
+  }, [battleStatus]);
+
+  useEffect(() => {
+    if (!battle || battleStatus === "generating") return;
+    if (seenBattleIdRef.current === battle.id) return;
+    seenBattleIdRef.current = battle.id;
+    void playSe(seKoRef);
+    const timeoutId = window.setTimeout(() => {
+      if (mySlot) {
+        if (battle.winnerSlot === mySlot) {
+          void playSe(seWinRef);
+        } else {
+          void playSe(seLoseRef);
+        }
+      } else {
+        void playSe(seWinRef);
+      }
+    }, 350);
+    return () => window.clearTimeout(timeoutId);
+  }, [battle?.id, battleStatus, mySlot]);
 
   useEffect(() => {
     if (bothReady && !hasAutoScrolledRef.current) {
@@ -227,9 +423,12 @@ export default function RoomPage() {
         throw new Error("この枠は操作できません");
       }
       const fallbackPlayer = slot === 1 ? playerA : playerB;
-      const name = forms[slot].name || fallbackPlayer?.name || "";
-      const description =
-        forms[slot].description || fallbackPlayer?.description || "";
+      const name = cleanFormValue(
+        forms[slot].name || fallbackPlayer?.name || ""
+      );
+      const description = cleanFormValue(
+        forms[slot].description || fallbackPlayer?.description || ""
+      );
       if (!name || !description) {
         throw new Error("名前と描写を入力してください");
       }
@@ -249,6 +448,98 @@ export default function RoomPage() {
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || "Failed to submit");
+      }
+      await refreshStatus();
+    } catch (err: any) {
+      setError(err.message || "Failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const setEditingState = async (slot: 1 | 2, editing: boolean) => {
+    setLoading(true);
+    setError(null);
+    try {
+      if (isSpectator || mySlot !== slot) {
+        throw new Error("この枠は操作できません");
+      }
+      const res = await fetch(`/api/rooms/${roomCode}/edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          password,
+          slot,
+          token: viewerToken,
+          editing,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to update editing");
+      }
+      await refreshStatus();
+    } catch (err: any) {
+      setError(err.message || "Failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startEdit = async (slot: 1 | 2) => {
+    const player = slot === 1 ? playerA : playerB;
+    if (player) {
+      setForms((prev) => ({
+        ...prev,
+        [slot]: {
+          name: player.name,
+          description: player.description,
+        },
+      }));
+    }
+    await setEditingState(slot, true);
+  };
+
+  const cancelEdit = async (slot: 1 | 2) => {
+    await setEditingState(slot, false);
+    const player = slot === 1 ? playerA : playerB;
+    if (player) {
+      setForms((prev) => ({
+        ...prev,
+        [slot]: {
+          name: player.name,
+          description: player.description,
+        },
+      }));
+    }
+  };
+
+  const saveEdit = async (slot: 1 | 2) => {
+    setLoading(true);
+    setError(null);
+    try {
+      if (isSpectator || mySlot !== slot) {
+        throw new Error("この枠は操作できません");
+      }
+      const name = cleanFormValue(forms[slot].name);
+      const description = cleanFormValue(forms[slot].description);
+      if (!name || !description) {
+        throw new Error("名前と描写を入力してください");
+      }
+      const res = await fetch(`/api/rooms/${roomCode}/edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          password,
+          slot,
+          token: viewerToken,
+          name,
+          description,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save edit");
       }
       await refreshStatus();
     } catch (err: any) {
@@ -306,6 +597,15 @@ export default function RoomPage() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              className="btn-ghost"
+              type="button"
+              onClick={() => toggleMute()}
+              title={isMuted ? "ミュート解除" : "ミュート"}
+              aria-label={isMuted ? "ミュート解除" : "ミュート"}
+            >
+              {isMuted ? "🔇" : "🔊"}
+            </button>
             <button
               className="btn-ghost"
               type="button"
@@ -382,11 +682,14 @@ export default function RoomPage() {
                 const isMine = mySlot === slot;
                 const claimed = slotClaimed(slot);
                 const statusLabel = player
-                  ? "生成完了"
+                  ? player.isEditing
+                    ? "修正中"
+                    : "生成完了"
                   : claimed
                     ? "入力中"
                     : "参加待ち";
-                const showDetails = isMine || canRevealOpponent;
+                const isEditing = Boolean(player?.isEditing);
+                const showDetails = canShowCharacter(player);
                 return (
                   <div key={slot} className="glass rounded-3xl p-6">
                     <div className="flex items-center justify-between">
@@ -396,42 +699,138 @@ export default function RoomPage() {
                       <span className="tag">{statusLabel}</span>
                     </div>
                     {player ? (
-                      <div className="mt-4 space-y-3">
-                        {showDetails ? (
-                          <img
-                            src={player.imageUrl}
-                            alt={player.name}
-                            className="h-72 w-full rounded-2xl object-contain bg-white/70"
-                          />
-                        ) : (
-                          <div className="h-72 w-full rounded-2xl bg-white/70 text-sm text-neutral-500 flex items-center justify-center">
-                            相手のキャラは非公開
+                      isMine && isEditing ? (
+                        <div className="mt-4 space-y-3">
+                          <div className="rounded-2xl border border-dashed border-neutral-300 bg-white/60 p-4 text-sm text-neutral-600">
+                            修正中のため画像は非表示です。
                           </div>
-                        )}
-                        <div>
-                          <div className="text-lg font-semibold">
-                            {showDetails ? player.name : "？？？"}
+                          <label className="block text-sm">
+                            名前
+                            <input
+                              value={forms[slot as 1 | 2].name}
+                              onChange={(event) =>
+                                setForms((prev) => ({
+                                  ...prev,
+                                  [slot]: {
+                                    ...prev[slot as 1 | 2],
+                                    name: event.target.value,
+                                  },
+                                }))
+                              }
+                              className="mt-2 w-full rounded-xl border border-neutral-300 px-3 py-2"
+                            />
+                          </label>
+                          <label className="block text-sm">
+                            描写（{room?.charLimit}文字まで）
+                            <textarea
+                              value={forms[slot as 1 | 2].description}
+                              onChange={(event) =>
+                                setForms((prev) => ({
+                                  ...prev,
+                                  [slot]: {
+                                    ...prev[slot as 1 | 2],
+                                    description: event.target.value,
+                                  },
+                                }))
+                              }
+                              maxLength={room?.charLimit}
+                              rows={3}
+                              className="mt-2 w-full rounded-xl border border-neutral-300 px-3 py-2"
+                            />
+                            <div className="mt-1 text-xs text-neutral-500">
+                              {forms[slot as 1 | 2].description.length} / {room?.charLimit}
+                            </div>
+                          </label>
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <button
+                              className="btn-primary w-full"
+                              type="button"
+                              disabled={loading}
+                              onClick={() => saveEdit(slot as 1 | 2)}
+                            >
+                              {loading ? "保存中..." : "修正を保存"}
+                            </button>
+                            <button
+                              className="btn-ghost w-full"
+                              type="button"
+                              disabled={loading}
+                              onClick={() => cancelEdit(slot as 1 | 2)}
+                            >
+                              キャンセル
+                            </button>
                           </div>
-                          <div className="text-sm text-neutral-600">
-                            {showDetails ? player.description : "生成完了"}
-                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-4 space-y-3">
                           {showDetails ? (
-                            <div className="mt-2 text-xs text-neutral-500">
-                              絵柄：{player.styleLabel}
+                            <img
+                              src={player.imageUrl}
+                              alt={player.name}
+                              className="h-72 w-full rounded-2xl object-contain bg-white/70"
+                            />
+                          ) : (
+                            <div className="h-72 w-full rounded-2xl bg-white/70 text-sm text-neutral-500 flex items-center justify-center">
+                              {player.isEditing
+                                ? "修正中のため非公開"
+                                : "相手のキャラは非公開"}
+                            </div>
+                          )}
+                          <div>
+                            <div className="text-lg font-semibold">
+                              {showDetails ? player.name : "？？？"}
+                            </div>
+                            <div className="text-sm text-neutral-600">
+                              {showDetails ? player.description : "生成完了"}
+                            </div>
+                            {showDetails ? (
+                              <>
+                                <div className="mt-2 text-xs text-neutral-500">
+                                  絵柄：{player.styleLabel}
+                                </div>
+                                <div className="stat-grid mt-3">
+                                  {[
+                                    { label: "こうげき", value: player.attack },
+                                    { label: "まもり", value: player.defense },
+                                    { label: "まほう", value: player.magic },
+                                    { label: "まりょく", value: player.mana },
+                                    { label: "はやさ", value: player.speed },
+                                  ].map((stat) => (
+                                    <div key={stat.label} className="stat-pill">
+                                      <span className="stat-label">{stat.label}</span>
+                                      <span className="stat-value">
+                                        {formatStat(stat.value)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <p className="summary-card">
+                                  {player.summary || "画像解析中..."}
+                                </p>
+                              </>
+                            ) : null}
+                          </div>
+                          {isMine ? (
+                            <div className="flex flex-col gap-2">
+                              <button
+                                className="btn-ghost w-full"
+                                type="button"
+                                disabled={loading}
+                                onClick={() => submitPlayer(slot as 1 | 2, true)}
+                              >
+                                {loading ? "再生成中..." : "キャラ再生成"}
+                              </button>
+                              <button
+                                className="btn-primary w-full"
+                                type="button"
+                                disabled={loading}
+                                onClick={() => startEdit(slot as 1 | 2)}
+                              >
+                                名前と描写を修正
+                              </button>
                             </div>
                           ) : null}
                         </div>
-                        {isMine ? (
-                          <button
-                            className="btn-ghost w-full"
-                            type="button"
-                            disabled={loading}
-                            onClick={() => submitPlayer(slot as 1 | 2, true)}
-                          >
-                            {loading ? "再生成中..." : "キャラ再生成"}
-                          </button>
-                        ) : null}
-                      </div>
+                      )
                     ) : isMine ? (
                       <div className="mt-4 space-y-3">
                         <label className="block text-sm">
@@ -507,23 +906,43 @@ export default function RoomPage() {
                     <div className="result-stage">
                       <div className="result-card loser">
                         <div className="result-image">
-                          <img
-                            src={loserPlayer.imageUrl}
-                            alt={loserPlayer.name}
-                            className="result-img"
-                          />
+                          {canShowCharacter(loserPlayer) ? (
+                            <img
+                              src={loserPlayer.imageUrl}
+                              alt={loserPlayer.name}
+                              className="result-img"
+                            />
+                          ) : (
+                            <div className="result-img result-placeholder">
+                              非公開
+                            </div>
+                          )}
                         </div>
-                        <div className="result-name">{loserPlayer.name}</div>
+                        <div className="result-name">
+                          {canShowCharacter(loserPlayer)
+                            ? loserPlayer.name
+                            : "？？？"}
+                        </div>
                       </div>
                       <div className="result-card winner">
                         <div className="result-image">
-                          <img
-                            src={winnerPlayer.imageUrl}
-                            alt={winnerPlayer.name}
-                            className="result-img"
-                          />
+                          {canShowCharacter(winnerPlayer) ? (
+                            <img
+                              src={winnerPlayer.imageUrl}
+                              alt={winnerPlayer.name}
+                              className="result-img"
+                            />
+                          ) : (
+                            <div className="result-img result-placeholder">
+                              非公開
+                            </div>
+                          )}
                         </div>
-                        <div className="result-name">{winnerPlayer.name}</div>
+                        <div className="result-name">
+                          {canShowCharacter(winnerPlayer)
+                            ? winnerPlayer.name
+                            : "？？？"}
+                        </div>
                       </div>
                     </div>
                   ) : null}
@@ -563,7 +982,7 @@ export default function RoomPage() {
                 <div className="mt-5 space-y-4">
                   <div className="versus-stage">
                     <div className="versus-card left">
-                      {playerA ? (
+                      {playerA && canShowCharacter(playerA) ? (
                         <img
                           src={playerA.imageUrl}
                           alt={playerA.name}
@@ -574,7 +993,7 @@ export default function RoomPage() {
                       )}
                     </div>
                     <div className="versus-card right">
-                      {playerB ? (
+                      {playerB && canShowCharacter(playerB) ? (
                         <img
                           src={playerB.imageUrl}
                           alt={playerB.name}
@@ -595,7 +1014,7 @@ export default function RoomPage() {
                 <div className="mt-5 space-y-4">
                   <div className="versus-stage">
                     <div className="versus-card left">
-                      {playerA && (canRevealOpponent || mySlot === 1) ? (
+                      {playerA && canShowCharacter(playerA) ? (
                         <img
                           src={playerA.imageUrl}
                           alt={playerA.name}
@@ -606,7 +1025,7 @@ export default function RoomPage() {
                       )}
                     </div>
                     <div className="versus-card right">
-                      {playerB && (canRevealOpponent || mySlot === 2) ? (
+                      {playerB && canShowCharacter(playerB) ? (
                         <img
                           src={playerB.imageUrl}
                           alt={playerB.name}

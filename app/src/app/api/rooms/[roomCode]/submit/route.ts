@@ -1,8 +1,8 @@
 ﻿import { NextResponse } from "next/server";
 import { SAFE_CONTENT_RULES, STYLE_POOL } from "@/lib/constants";
-import { generateImage } from "@/lib/gemini";
+import { generateImage, generateText } from "@/lib/gemini";
 import { supabaseAdmin, SUPABASE_BUCKET } from "@/lib/supabase/admin";
-import { cleanText, pickRandom, verifyPassword } from "@/lib/utils";
+import { cleanText, pickRandom, safeJsonParse, verifyPassword } from "@/lib/utils";
 
 export const runtime = "nodejs";
 
@@ -27,6 +27,49 @@ function extensionForMime(mimeType: string) {
   return "png";
 }
 
+type StatPayload = {
+  attack?: number;
+  defense?: number;
+  magic?: number;
+  mana?: number;
+  speed?: number;
+  summary?: string;
+};
+
+function extractJson(text: string) {
+  const match = text.match(/\{[\s\S]*\}/);
+  return match ? match[0] : null;
+}
+
+function clampStat(value: unknown, fallback = 50) {
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(0, Math.min(100, Math.round(num)));
+}
+
+function normalizeSummary(summary: unknown, fallback: string) {
+  if (typeof summary !== "string") {
+    return fallback.slice(0, 60);
+  }
+  const trimmed = cleanText(summary);
+  if (!trimmed) {
+    return fallback.slice(0, 60);
+  }
+  return trimmed.length > 60 ? trimmed.slice(0, 60) : trimmed;
+}
+
+function parseStats(text: string, fallbackSummary: string) {
+  const jsonText = extractJson(text) || text;
+  const parsed = safeJsonParse<StatPayload>(jsonText) || {};
+  return {
+    attack: clampStat(parsed.attack),
+    defense: clampStat(parsed.defense),
+    magic: clampStat(parsed.magic),
+    mana: clampStat(parsed.mana),
+    speed: clampStat(parsed.speed),
+    summary: normalizeSummary(parsed.summary, fallbackSummary),
+  };
+}
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ roomCode: string }> }
@@ -126,6 +169,21 @@ export async function POST(
       prompt,
     });
 
+    const textModel = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
+    const statsPrompt = `Analyze the provided character image only. Output strict JSON with keys: {"attack":number,"defense":number,"magic":number,"mana":number,"speed":number,"summary":"..."}. Use integer values from 0-100 for each stat. The summary should be about 50 Japanese characters, kid-safe, and based only on the image. ${SAFE_CONTENT_RULES}`;
+
+    let stats = parseStats("{}", description);
+    try {
+      const statsRaw = await generateText({
+        model: textModel,
+        prompt: statsPrompt,
+        images: [image],
+      });
+      stats = parseStats(statsRaw, description);
+    } catch (statError) {
+      console.warn("Failed to generate stats:", statError);
+    }
+
     const extension = extensionForMime(image.mimeType);
     const path = `characters/${room.code}/slot-${slot}-${Date.now()}.${extension}`;
 
@@ -158,9 +216,16 @@ export async function POST(
         style_label: style.label,
         image_path: path,
         image_url: publicUrl,
+        attack: stats.attack,
+        defense: stats.defense,
+        magic: stats.magic,
+        mana: stats.mana,
+        speed: stats.speed,
+        summary: stats.summary,
+        is_editing: false,
       })
       .select(
-        "id,slot,player_name,description,style_id,style_label,image_url,created_at"
+        "id,slot,player_name,description,style_id,style_label,image_url,attack,defense,magic,mana,speed,summary,is_editing,created_at"
       )
       .single();
 
@@ -179,6 +244,13 @@ export async function POST(
       styleId: player.style_id,
       styleLabel: player.style_label,
       imageUrl: player.image_url,
+      attack: player.attack,
+      defense: player.defense,
+      magic: player.magic,
+      mana: player.mana,
+      speed: player.speed,
+      summary: player.summary,
+      isEditing: player.is_editing,
       createdAt: player.created_at,
     };
 
@@ -191,4 +263,8 @@ export async function POST(
     );
   }
 }
+
+
+
+
 

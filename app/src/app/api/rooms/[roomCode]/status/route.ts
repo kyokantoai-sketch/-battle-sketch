@@ -62,7 +62,7 @@ export async function POST(
     const { data: players } = await supabaseAdmin
       .from("characters")
       .select(
-        "id,slot,player_name,description,style_id,style_label,image_url,created_at"
+        "id,slot,player_name,description,style_id,style_label,image_url,attack,defense,magic,mana,speed,summary,is_editing,created_at"
       )
       .eq("room_id", room.id)
       .order("slot", { ascending: true });
@@ -86,6 +86,13 @@ export async function POST(
       styleId: player.style_id,
       styleLabel: player.style_label,
       imageUrl: player.image_url,
+      attack: player.attack,
+      defense: player.defense,
+      magic: player.magic,
+      mana: player.mana,
+      speed: player.speed,
+      summary: player.summary,
+      isEditing: player.is_editing,
       createdAt: player.created_at,
     }));
 
@@ -135,5 +142,6 @@ export async function POST(
     );
   }
 }
+
 
 

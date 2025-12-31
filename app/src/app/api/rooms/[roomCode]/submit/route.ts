@@ -230,8 +230,19 @@ export async function POST(
       .single();
 
     if (playerError || !player) {
+      console.error("Failed to save player:", playerError);
       return NextResponse.json(
-        { error: "Failed to save player" },
+        {
+          error: "Failed to save player",
+          detail: playerError
+            ? {
+                message: playerError.message,
+                details: (playerError as any).details,
+                hint: (playerError as any).hint,
+                code: (playerError as any).code,
+              }
+            : null,
+        },
         { status: 500 }
       );
     }

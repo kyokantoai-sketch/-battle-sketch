@@ -35,6 +35,8 @@ type StatPayload = {
   speed?: number;
   summary?: string;
 };
+type StatKey = "attack" | "defense" | "magic" | "mana" | "speed";
+type StatNumbers = Record<StatKey, number>;
 
 function extractJson(text: string) {
   const match = text.match(/\{[\s\S]*\}/);
@@ -58,15 +60,57 @@ function normalizeSummary(summary: unknown, fallback: string) {
   return trimmed.length > 60 ? trimmed.slice(0, 60) : trimmed;
 }
 
+function normalizeStatTotal(stats: StatNumbers): StatNumbers {
+  const keys: StatKey[] = ["attack", "defense", "magic", "mana", "speed"];
+  const safeValues = keys.map((key) => Math.max(0, stats[key]));
+  const sum = safeValues.reduce((acc, value) => acc + value, 0);
+  if (sum <= 0) {
+    return {
+      attack: 20,
+      defense: 20,
+      magic: 20,
+      mana: 20,
+      speed: 20,
+    };
+  }
+
+  const floats = safeValues.map((value) => (value / sum) * 100);
+  const floored = floats.map((value) => Math.floor(value));
+  let total = floored.reduce((acc, value) => acc + value, 0);
+  let diff = 100 - total;
+
+  if (diff > 0) {
+    const withFrac = floats.map((value, index) => ({
+      index,
+      frac: value - floored[index],
+    }));
+    withFrac.sort((a, b) => b.frac - a.frac);
+    for (let i = 0; i < diff; i += 1) {
+      floored[withFrac[i % withFrac.length].index] += 1;
+    }
+  }
+
+  return {
+    attack: floored[0],
+    defense: floored[1],
+    magic: floored[2],
+    mana: floored[3],
+    speed: floored[4],
+  };
+}
+
 function parseStats(text: string, fallbackSummary: string) {
   const jsonText = extractJson(text) || text;
   const parsed = safeJsonParse<StatPayload>(jsonText) || {};
-  return {
+  const normalized = normalizeStatTotal({
     attack: clampStat(parsed.attack),
     defense: clampStat(parsed.defense),
     magic: clampStat(parsed.magic),
     mana: clampStat(parsed.mana),
     speed: clampStat(parsed.speed),
+  });
+  return {
+    ...normalized,
     summary: normalizeSummary(parsed.summary, fallbackSummary),
   };
 }
@@ -170,7 +214,7 @@ export async function POST(
     });
 
     const textModel = process.env.GEMINI_TEXT_MODEL || "gemini-2.5-flash";
-    const statsPrompt = `Analyze the provided character image only. Output strict JSON with keys: {"attack":number,"defense":number,"magic":number,"mana":number,"speed":number,"summary":"..."}. Use integer values from 0-100 for each stat. The summary should be about 50 Japanese characters, kid-safe, and based only on the image. ${SAFE_CONTENT_RULES}`;
+    const statsPrompt = `Analyze the provided character image only. Output strict JSON with keys: {"attack":number,"defense":number,"magic":number,"mana":number,"speed":number,"summary":"..."}. Use integer values from 0-100 for each stat. The total should be roughly balanced (we will normalize to 100). The summary must be about 50 Japanese characters, written in a cool, encyclopedia-like tone (図鑑の説明文). Avoid casual praise like "かわいい" or "素敵". Base it only on the image and keep it kid-safe. ${SAFE_CONTENT_RULES}`;
 
     let stats = parseStats("{}", description);
     try {

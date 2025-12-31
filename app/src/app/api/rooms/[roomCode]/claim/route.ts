@@ -29,7 +29,7 @@ function generateToken() {
 
 export async function POST(
   request: Request,
-  { params }: { params: { roomCode: string } }
+  { params }: { params: Promise<{ roomCode: string }> }
 ) {
   try {
     const body = await request.json().catch(() => null);
@@ -37,7 +37,8 @@ export async function POST(
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
 
-    const roomCode = resolveRoomCode(params as any, request);
+    const awaitedParams = await params;
+    const roomCode = resolveRoomCode(awaitedParams as any, request);
     if (!roomCode) {
       return NextResponse.json({ error: "Missing room code" }, { status: 400 });
     }
@@ -123,3 +124,4 @@ export async function POST(
     );
   }
 }
+
